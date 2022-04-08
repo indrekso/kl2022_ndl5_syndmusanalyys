@@ -1,0 +1,328 @@
+---
+title: "Sündmusanalüüs"
+subtitle: "Sotsiaalse analüüsi meetodid: kvantitatiivne lähenemine"
+author: "Indrek Soidla"
+date: "8 4 2022"
+output: 
+  html_document:
+    css: styles.css
+    theme: spacelab
+    highlight: tango
+    fig_cap: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+if (dir.exists("C:/Users/Public/Rstudio_packages")) {
+  .libPaths("C:/Users/Public/Rstudio_packages")
+}
+```
+
+Loeme sisse vajalikud paketid.
+
+```{r}
+library(survival)
+library(essurvey)
+library(weights)
+library(dplyr)
+library(descr)
+library(survminer)
+```
+
+
+## Loengunäide
+
+Teeme harjutuseks R-s läbi elukestuskõvera näite loenguslaididelt. Laeme sisse andmed ja vaatame andmed üle.
+
+```{r}
+andm <- read.csv2("data/syndmusanalnaide2.csv")
+andm
+```
+
+
+
+```{r}
+fit <- survfit(Surv(aeg, syndmus) ~ 1, data = andm)
+summary(fit)
+```
+
+
+```{r}
+plot(fit, conf.int = F, mark.time = F)
+plot(fit, conf.int = F, mark.time = T)
+plot(fit, conf.int = T, mark.time = T)
+```
+
+## Kaplan-Meier
+
+Kasutame ESS 2018. aasta Eesti andmeid, arvutame elukestuskõverad esimese lapse sünni vanuse kohta.
+
+Laeme sisse andmed.
+
+```{r}
+library(essurvey)
+set_email("indrek.soidla@ut.ee")
+
+ee9 <- import_country(country = "Estonia", rounds = 9)
+```
+
+Tunnuses `fcldbrn` on andmed selle kohta, mis aastal sündis vastajal esimene laps. Vaatame selle tunnuse jaotust histogrammil, kaalume ka andmed läbi järelkihistamiskaaludega.
+
+```{r}
+library(weights)
+wtd.hist(ee9$fcldbrn, weight = ee9$pspwght)
+```
+
+Arvutame tunnusesse `fcldbthage` respondendi vanuse esimese lapse sünni ajal ja vaatame tunnuse jaotust.
+
+```{r}
+library(dplyr)
+ee9 <- ee9 %>% 
+  mutate(fcldbthage = fcldbrn - ee9$yrbrn)
+
+wtd.hist(ee9$fcldbthage, weight = ee9$pspwght, breaks = 25, freq = T)
+```
+
+Sama tulemuse (tehniliselt tulpdiagrammina) koos sagedustabeliga saaksime funktsiooniga `freq` paketist `descr`.
+
+```{r}
+descr::freq(ee9$fcldbthage, w = ee9$pspwght)
+```
+
+Meil on olemas nüüd tunnus selle kohta, mis vanuses kellelgi sündmus (esimese lapse sünd) toimus, aga meil peaks olema ka tunnus selle kohta, kellel sündmus (lapse sünd) üldse toimus. ESS-i andmestikus juba on suunav tunnus, mis seda näitab, `bthcld`. Vaatame, mis on selle tunnuse täpsem nimetus ja kategooriad. Mingi ülevaate, millest mõnel juhul piisab, saab funktsiooniga `str` ehk *structure*.
+
+```{r}
+str(ee9$bthcld)
+```
+
+Täpsema ülevaate saab funktsiooniga `attributes`.
+
+```{r}
+attributes(ee9$bthcld)
+```
+
+Näeme, et tunnuses on valiidseteks väärtusteks kaks kategooriat nagu peakski olema, aga elukestuskõverate arvutamiseks peaks sündmuse mittetoimumine (väärtus 2 ehk 'No') olema väärtusega 0.
+
+```{r}
+ee9 <- ee9 %>% 
+  mutate(bthcld01 = ifelse(bthcld == 2, 0, 1))
+
+descr::freq(ee9$bthcld, w = ee9$pspwght)
+descr::freq(ee9$bthcld01, w = ee9$pspwght)
+
+ee9 %>% subset(bthcld == 1) %>% pull(fcldbthage) %>% summarytools::freq()
+```
+
+Teeme elukestuskõvera.
+
+```{r}
+fit2 <- survfit(Surv(fcldbthage, bthcld01) ~ 1, data = ee9, weights = pspwght)
+summary(fit2)
+
+plot(fit2, conf.int = T, mark.time = T)
+```
+
+Saime elukestuskõvera, aga see võtab arvesse ainult neid indiviide, kellel sündmus toimus, sest ülejäänutel ei ole tunnuses, mis näitab indiviidi vanust esimese lapse sünnil, mingit väärtust. Neil eii saagi seal mingit väärtust olla, sest neil pole lapsi sündinud, samas ei tea me (vähemalt nooremate vastajate puhul) kindlalt, et neil lapsi ka tulevikus ei sünni. Seega on tegu tsenseeritud indiviididega, kelle puhul peaks tunnuses `fcldbthage` olema vanus küsitluse hetkel.
+
+Lisame tunnusesse `fcldbthage` tsenseeritud indiviidide andmed.
+
+```{r}
+ee9 <- ee9 %>% 
+  mutate(fcldbthage2 = ifelse(bthcld01 == 1, fcldbthage, agea))
+
+descr::freq(ee9$fcldbthage2, w = ee9$pspwght)
+```
+
+Teeme elukestuskõvera, võttes arvesse ka tsenseeritud indiviidide andmed. Vaatame, kuidas elukestuskõvera kuju muutus.
+
+```{r}
+fit3 <- survfit(Surv(fcldbthage2, bthcld01) ~ 1, data = ee9, weights = pspwght)
+summary(fit3)
+
+plot(fit2, conf.int = T, mark.time = F, xlim = c(0,51))
+plot(fit3, conf.int = T, mark.time = F, xlim = c(0,51))
+```
+
+Elukestuskõvera kuju põhimõtteliselt jäi samaks, välja arvatud tõik, et kõver ei jõudnud y-teljel nulli, vaid jäi 0,124 peale pidama (täpset väärtust vt `summary(fit3)` tabeli veerust `survival`). See on seetõttu, et lapsi mitte saanute seas on vanemaid inimesi. Sisuliselt tähendab see seda, et 51. eluaastaks on sündmuse mittetoimumise tõenäosus ehk tõenäosus, et lapsi pole saadud 0,124. Jaotusfunktsiooni väärtus on samas vanuses 1 - 0,124 = 0,876 ehk tõenäosus, et 51. eluaastaks on lapsi saadud, on 0,876. esimese lapse saamise tõenäosus ehk tõenäosus üldse lapsi saada 0,124. Tundub ülepakutud? Mudel ei küsi, kui vanalt on veel võimalik lapsi saada, ta arvestab sellega, et see võimalus on kõigil, ka neil, kes on üle 51 aasta vanad (kõrgeim esimese lapse saamise vanus andmestikus on 51), seega ka neil, kes on 60, 70 või 90 aastat vanad. Mõtlevate olevustena saame aru, et see ei ole siiski realistlik vaade ning kuidagi võiks elukestuskõverat korrigeerida.
+
+Jätame välja indiviidid, kes pole kunagi lapsi saanud ja kelle puhul võiks enam-vähem kindel olla, et nad lapsi enam ei saa. Kust seda piiri tõmmata, jääb subjektiivseks, kui meil pole just mingit täpsemat teadmist vanemate vanuse kohta esimese lapse sünnil. Lähtume siin sellest, et meie andmestikus on kõrgeim vanus esimese lapse saamisel 51. Nende hulgas, kes kunagi on lapsi saanud, on kolm indiviidi, kellel vanus esimese lapse saamisel pole teada, võime need analüüsi jätta.
+
+```{r}
+ee9_51 <- ee9 %>% 
+  subset(agea <= 51 | bthcld01 == 1)
+
+fit4 <- survfit(Surv(fcldbthage2, bthcld01) ~ 1, data = ee9_51, weights = pspwght)
+summary(fit4)
+
+plot(fit4, conf.int = T, mark.time = F, xlim = c(0, 51))
+```
+
+Ka nüüd on kõver sama kujuga, võrreldes eelneva joonisega y-telje lõikes natuke välja venitatud, nii et 51-aastaselt on nüüd sündmuse toimumise tõenäosus 0,06.
+
+## Kaplan-Meier rühmiti
+
+Eelnev näide püüdis ära kasutada mingeid ajasõltvaid andmeid, mida üks tavaline küsitlusuuring võib sisaldada. Sisulisel tasandil ei olnud see kõige õnnestunum, sest saadud sündmuse toimumise tõenäosusi on keeruline kuidagi üldistada - olid ju sündmused (laste sünnid) toimunud intevjueeritute eludes väga erinevatel aegadel (alates umbes eelmise sajandi keskpaigast praeguse ajani), mil nii esmasünnitamise vanus kui elu jooksul saadavate laste arv on olnud väga erinevad. Seetõttu ei ütle saadud esmasünnitamise tõenäosused konkreetses vanuses meile kuigi palju esmasünnitamise tõenäosuse kohta mingis vanuses aastal 2022.
+
+Teeme analüüsi sisulises plaanis natuke mõistlikumaks. Uurime elukestuskõveraid erinevates kohortides. Indiviide on meil küll ligi 2000, kuid grupiti erinevate vanuste kohta täpsete tulemuste saamiseks pole indiviididega siiski priisata, seetõttu jagame valimi kolmeks enam-vähem võrdse suurusega sünnikohordiks.
+
+```{r}
+ee9_51$yrbrncat <- cut(ee9_51$yrbrn, c(1927, 1960, 1980, 2003))
+
+fit_yrbrn <- survfit(Surv(fcldbthage2, bthcld01) ~ yrbrncat, data = ee9_51, weights = pspwght)
+
+summary(fit_yrbrn)
+
+plot(fit_yrbrn, col = c("red", "green", "blue"), conf.int = T, mark.time = F, xlim = c(0,51))
+```
+
+Seni oleme elukestuskõverate visuaalseks kujutamiseks kasutanud funktsiooni `plot`, mis on lihtsam ja sobib kiireks andmete (avastuslikuks) visualiseerimiseks, samas on see ka primitiivsem - mitme kõvera puhul muutub nende usaldusvahemike eristamine keeruliseks. Nagu ikka, tuleb appi `ggplot2` ja selle põhjal koostatud pakett `survminer`.
+
+```{r}
+library(survminer)
+ggsurvplot(fit_yrbrn, data = ee9_51, conf.int = TRUE, 
+           censor = TRUE, # ei too kõveratel välja vanuseid, mil esines tsenseeritud indiviide
+           legend.labs = c("1928-60", "1961-80", "1981-2003"), 
+           surv.median.line = "hv", # toome välja elukestuse mediaanväärtused
+           ggtheme = theme_minimal())
+```
+
+Mida saame jooniselt järeldada esimese lapse saamise tõenäosuse kohta eri sünnikohortides? Eri kohortide võrdluses? Mida näitavad siin usaldusvahemikud?
+
+**Harjutus.** Arvutage esimese lapse saamise tõenäosused sõltuvalt vastaja vanusest, haridustee pikkuse lõikes. Haridustee pikkuse tunnus tehke kategoriaalseks, võtke kategooriateks 3-9, 10-12, 13-15 ja 16+ aastat. Koostage vastavad elukestuskõverad (joonisel). 
+
+Püüdke joonise alusel vastata järgmistele küsimustele. 
+- Kas esimese lapse saamise vanus on seotud haridustee pikkusega? 
+- Milline see seos on, st millised on erinevused esimese lapse saamise vanuses haridustee pikkuse lõikes? 
+- Sisulises plaanis: kas erinevused võivad tuleneda millestki muust kui haridustee pikkusest?
+
+```{r}
+ee9_51$eduyrscat4 <- cut(ee9_51$eduyrs, c(3, 9, 12, 15, 30))
+
+fit_eduyrs <- survfit(Surv(fcldbthage2, bthcld01) ~ eduyrscat4, data = ee9_51, weights = pspwght)
+
+plot(fit_eduyrs, col = c("black", "red", "blue", "green"))
+
+ggsurvplot(fit_eduyrs, data = ee9_51, conf.int = TRUE, 
+           censor = F, 
+           legend.labs = c("4-9", "10-12", "13-15", "16+"), 
+           surv.median.line = "hv", 
+           ggtheme = theme_minimal())
+
+summarytools::ctable(ee9_51$yrbrncat, ee9_51$eduyrscat4, weights = ee9_51$pspwght)
+descr::crosstab(ee9_51$yrbrncat, ee9_51$eduyrscat4, weight = ee9_51$pspwght, prop.c = TRUE)
+
+p <- vector(mode = "list", length = 3)
+
+for (i in levels(ee9_51$yrbrncat)) {
+  ee9_51_yrbrn <- subset(ee9_51, yrbrncat == i)
+  
+  fit_eduyrs_yrbrn <- survfit(Surv(fcldbthage2, bthcld01) ~ eduyrscat4, data = ee9_51_yrbrn, weights = pspwght)
+  
+  p[[i]] <- ggsurvplot(fit_eduyrs_yrbrn, data = ee9_51_yrbrn, conf.int = TRUE, 
+           censor = F, 
+           legend.labs = c("4-9", "10-12", "13-15", "16+"), 
+           surv.median.line = "hv", 
+           ggtheme = theme_minimal(), 
+           title = i)
+}
+
+p[[levels(ee9_51$yrbrncat)[1]]]
+
+
+```
+
+## Logaritmiline astaktest (log-rank test)
+
+Eelnevast juba enam-vähem nägime, kas eri sünnikohortide ja haridustee pikkuse gruppide elukestuskõverad erinevad, teeme kindluse mõttes ka logaritmilised astakmärgitestid.
+
+```{r}
+survdiff(Surv(fcldbthage2, bthcld01) ~ yrbrncat, data = ee9_51)
+
+survdiff(Surv(fcldbthage2, bthcld01) ~ eduyrscat, data = ee9_51)
+```
+
+Hii-ruut-statistiku olulisuse tõenäosused on mõlemal juhul väga väikesed, seega saame kinnitada (vähemalt osade) elukestuskõverate erinevust. Millised elukestuskõverad täpselt üksteisest erinevad, seda antud test meile ei ütle, selleks tuleb ikkagi uurida elukestuskõverate diagramme või teha teste gruppide võrdluses.
+
+Haridusgruppide puhul kattusid elukestuskõverad kõige enam lühema haridusteega indiviidide gruppides, uurime nende erinevust logaritmilise astaktesti abil.
+
+```{r}
+survdiff(Surv(fcldbthage2, bthcld01) ~ eduyrscat, data = subset(ee9_51, eduyrs <= 12))
+```
+
+Teststatistiku olulisuse tõenäosus on kõrge, ühelgi olulisuse nivool elukestuskõverate erinevust kinnitada ei saa. Kui vaadata vastavat diagrammi, siis tegelikult on ka näha, et need kõverad lõikuvad kaks korda, nii et logaritmilise astaktesti eeldused ei ole siin täidetud, samas kõverate lõikumine ja küllaltki sarnane kuju näitavad ka ise ära, et mingit põhimõttelist erinevust on nende kahe kõvera erinevuse puhul raske väita.
+
+Kontrollime ka kahe ülejäänud grupi elukestuskõverate erinevust.
+
+```{r}
+survdiff(Surv(fcldbthage2, bthcld01) ~ eduyrscat, data = subset(ee9_51, eduyrs > 12))
+```
+
+Teststatistiku olulisuse tõenäosus on siin väga väike, nii et saame kinnitada esimese lapse saamise kumulatiivsete tõenäosuste erinevust nendes kahes grupis. Sisuliselt tähendab see ikka seda, et lapsevanema vanus esimese lapse sünnil on olenevalt haridustee pikkusest nendes kahes grupis erinev.
+
+## Coxi regressioon
+
+```{r}
+fit_gndr <- survfit(Surv(fcldbthage2, bthcld01) ~ gndr, data = ee9_51, weights = pspwght)
+summary(fit_gndr)
+
+plot(fit_eduyrs, col = c("black", "red", "blue", "green"))
+
+ggsurvplot(fit_gndr, data = ee9_51, conf.int = TRUE, 
+           censor = F, 
+           legend.labs = c("Mehed", "Naised"), 
+           surv.median.line = "hv", 
+           ggtheme = theme_minimal())
+
+
+ee9_51 <- ee9_51 %>% 
+  mutate(naine = ifelse(gndr == 2, 1, 0) %>% as.factor())
+
+coxmod1 <- coxph(Surv(fcldbthage2, bthcld01) ~ naine, data = ee9_51, weights = pspwght)
+summary(coxmod1)
+
+# lisame mudelisse haridustee pikkuse ja sünniaasta
+
+coxmod2 <- coxph(Surv(fcldbthage2, bthcld01) ~ naine + eduyrs + yrbrn, data = ee9_51, weights = pspwght)
+summary(coxmod2)
+
+# vaatame mudeli alusel prognoositavat elukestuskõverat
+
+ggsurvplot(survfit(coxmod2), data = ee9_51, 
+           censor = F, 
+           surv.median.line = "hv", 
+           ggtheme = theme_minimal())
+
+# kuidas erinevad mudeli alusel prognoositavad meeste ja naiste elukestuskõverad?
+
+gndr01_df <- with(ee9_51,
+               data.frame(gndr01 = as.factor(c(0, 1)),
+                          eduyrs = rep(weighted.mean(eduyrs, w = pspwght, na.rm = TRUE), 2),
+                          yrbrn = rep(weighted.mean(yrbrn, w = pspwght, na.rm = TRUE), 2)
+               )
+)
+gndr01_df
+
+fit <- survfit(coxmod2, newdata = gndr01_df)
+ggsurvplot(fit, data = gndr01_df, conf.int = TRUE, 
+           censor = F, 
+           legend.labs = c("Mehed", "Naised"), 
+           surv.median.line = "hv", 
+           ggtheme = theme_minimal())
+
+# leidke iseseisvalt, kuidas erinevad mudeli alusel prognoositavad elukestuskõverad eri pikkusega haridusteega ja eri aastatel sündinud inimestel. Haridustee puhul võiks võrrelda nt 8, 12 ja 17 aasta pikkuse haridusteega inimeste prognoose ning sünniaasta puhul 1950., 1970. ja 1990. aastal sündinute omasid.
+
+#### Riskide võrdelisuse eeldus ####
+
+# kontrollime tagantjärele ka riskide võrdelisuse eeldust Schönfeldi jääkide alusel
+# jäägid ei tohiks ajas varieeruda, sest Coxi mudel eeldab, et sõltumatute tunnuste väärtused ajas ei varieeru
+
+test_ph <- cox.zph(coxmod2)
+test_ph
+
+# mida väiksemad jäägid, sega täpsem on mudeli alusel saadav prognoos. Riskide võrdelisuse osas on tähtis, et jäägid peaksid varieeruma sõltumatu tunnuse regressioonikordaja ümber, varieeruvus ei tohiks ajas muutuda
+
+ggcoxzph(test_ph, var = "gndr01")
+ggcoxzph(test_ph, var = "eduyrs")
+ggcoxzph(test_ph, var = "yrbrn")
+```
+
